@@ -39,7 +39,7 @@ nu_21cm_rest = 1420.40575  # Rest-frame frequency of the 21 cm line in MHz
 
 # Calculate the observed frequency
 nu_obs = nu_21cm_rest / (1 + z_values)
-print("Observed frequency of the 21 cm line at z = 0.6:", nu_obs, "MHz")
+print("Observed frequency of the 21 cm line at z = 0.65:", nu_obs, "MHz")
 
 # VALUES OF μ_Θ FROM THE ARTICLE https://arxiv.org/pdf/2210.05705.pdf
 mi = 1
@@ -48,7 +48,7 @@ mi = 1
 b_g = 1.5
 
 # values from the HI bias from https://arxiv.org/pdf/2210.05705.pdf
-b_HI = 0.3 * (1 + z_values) + 0.6
+b_HI = 0.3 * (1 + z_values) + 0.65
 print(b_HI)
 
 # Value for the error on the redshift from https://arxiv.org/pdf/2210.05705.pdf
