@@ -73,7 +73,7 @@ ns = 0.96  # Scalar spectral index
 mnu = 0.06  # Sum of neutrino masses in eV
 omk = 0  # Curvature parameter, set to 0 for flat universe
 
-# Example usage:
+
 survey_area = 10000  # Square degrees
 redshift = 0.65
 #number_density = 0.01  # number density in galaxies per cubic Mpc
@@ -89,6 +89,7 @@ volume = 4 / 3 * np.pi * (2478 - 2195) ** 3 * survey_area_sr
 delta_k = 2 * np.pi / (volume ** (1/3))
 minkh_t = 0.01
 maxkh_t = 0.2
+
 log_spaced_k = np.geomspace(minkh_t, maxkh_t, 20)
 
 print('the value of the fundamental frequency is:')
@@ -392,7 +393,6 @@ Signal_IM_transpose = Signal_IM.T
 
 Cov_IM = diagonal_C_IM
 
-print(Cov_IM)
 det_IM = np.linalg.det(Cov_IM)
 Cov_IM_inv = np.linalg.inv(Cov_IM)
 
@@ -653,6 +653,14 @@ def log_likelihood_IM_g(theta, data):
     # Integrate power spectrum over k using the trapezoidal rule
     pk_int1 = trapezoidal_rule(pk_values1, k1)
 
+
+
+
+
+
+
+
+
     # from https://www.aanda.org/articles/aa/full_html/2020/10/aa38071-20/aa38071-20.html
 
     # σ_v controls the strength of the non-linear damping of the BAO signal in all directions in three-dimensions
@@ -730,12 +738,17 @@ np.random.seed(42)
 true_params = np.array([b_HI[0], H0])
 print(true_params)
 
-data_IM_g,_, data_IM_IM,_, _, _, _ = calculate_PS(d_Aref, H_z_values, H_ref, r_HI_g, k, mi, result_int, h_z_values, z_values, Omega_HI, pk_dw,
+
+P_IM_g, P_gg, P_IM, P_IM_noise, P_IM_g_wt_T, P_IM_IM_wt_T,_= calculate_PS(d_Aref, H_z_values, H_ref, r_HI_g, k, mi, result_int, h_z_values, z_values, Omega_HI, pk_dw,
                      frequency_to_temperature, theta_pb, r, b_g, growth_rate, true_params[0], true_params[1], sigma_8, factor)
+data_IM_IM = P_IM + P_IM_noise
+data_IM_g = P_IM_g + np.sqrt(P_IM_noise + shot_noise(number_density))
+
+
 # Setup the getdist sampler
 ndim = 2  # Number of parameters
-nwalkers = 20  # Number of walkers
-nsteps = 2000  # Number of steps
+nwalkers = 4  # Number of walkers
+nsteps = 200  # Number of steps
 
 # Initialize walkers in a small Gaussian ball around the initial guess
 initial_guess = [0.5, 60]
@@ -744,13 +757,7 @@ step_sizes = [1e-3, 1e-2]  # Initial step sizes for b_HI and sigma8 respectively
 
 # Reduce step size for b_HI
 #step_sizes[0] = 1e-4  # Adjust the step size for b_HI
-directory = "chains"
-if not os.path.exists(directory):
-    os.makedirs(directory)
 
-filename = os.path.join(directory, "CHAIN_NAME.h5")
-backend = emcee.backends.HDFBackend(filename)
-backend.reset(nwalkers, ndim)
 
 # Setup the getdist sampler with adjusted step sizes
 pos = initial_guess + step_sizes * np.random.randn(nwalkers, ndim)
@@ -758,18 +765,71 @@ pos = initial_guess + step_sizes * np.random.randn(nwalkers, ndim)
 
 
 
-sampler_IM_IM = emcee.EnsembleSampler(nwalkers, ndim, log_posterior_IM_IM, args=(data_IM_IM,), backend=backend)
-sampler_IM_g = emcee.EnsembleSampler(nwalkers, ndim, log_posterior_IM_g, args=(data_IM_g,), backend=backend)
+sampler_IM_IM = emcee.EnsembleSampler(nwalkers, ndim, log_posterior_IM_IM, args=(data_IM_IM,))
+#sampler_IM_IM.run_mcmc(initial_state=pos, nsteps=nsteps, progress=True)
 
+sampler_IM_g = emcee.EnsembleSampler(nwalkers, ndim, log_posterior_IM_g, args=(data_IM_g,))
+#sampler_IM_g.run_mcmc(initial_state=pos, nsteps=nsteps, progress=True)
 
-sampler_IM_IM.run_mcmc(initial_state=pos, nsteps=nsteps, progress=True)
-sampler_IM_g.run_mcmc(initial_state=pos, nsteps=nsteps, progress=True)
 
 burnin = int(0.3 * nsteps)
 
+max_n = 20000
+# We'll track how the average autocorrelation time estimate changes
+index = 0
+autocorr = np.empty(max_n)
 
-samples_IM_IM = sampler_IM_IM.get_chain(discard=burnin, flat=True)
-samples_IM_g = sampler_IM_g.get_chain(discard=burnin, flat=True)
+# This will be useful to testing convergence
+old_tau = np.inf
+
+max_n = 20000
+# Now we'll sample for up to max_n steps
+for sample in sampler_IM_IM.sample(pos, iterations=max_n, progress=True):
+# Only check convergence every 100 steps
+    if sampler_IM_IM.iteration % 100:
+        continue
+
+    # Compute the autocorrelation time so far
+    # Using tol=0 means that we'll always get an estimate even
+    # if it isn't trustworthy
+    tau = sampler_IM_IM.get_autocorr_time(tol=0)
+    autocorr[index] = np.mean(tau)
+    index += 1
+
+    # Check convergence
+    converged = np.all(tau * 100 < sampler_IM_IM.iteration)
+    converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+    if converged:
+        samples_IM_IM = sampler_IM_IM.get_chain(discard=burnin, flat=True)
+        break
+    old_tau = tau
+
+# Now we'll sample for up to max_n steps
+for sample in sampler_IM_g.sample(pos, iterations=max_n, progress=True):
+    # Only check convergence every 100 steps
+    if sampler_IM_g.iteration % 100:
+        continue
+
+    # Compute the autocorrelation time so far
+    # Using tol=0 means that we'll always get an estimate even
+    # if it isn't trustworthy
+    tau = sampler_IM_g.get_autocorr_time(tol=0)
+    autocorr[index] = np.mean(tau)
+    index += 1
+
+    # Check convergence
+    converged = np.all(tau * 100 < sampler_IM_g.iteration)
+    converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+    if converged:
+        samples_IM_g = sampler_IM_g.get_chain(discard=burnin, flat=True)
+        break
+    old_tau = tau
+
+
+
+
+
+
 
 
 
@@ -923,55 +983,3 @@ plt.show()
 
 # Set up the backend
 # Don't forget to clear it in case the file already exists
-
-
-
-max_n = 100000
-
-# We'll track how the average autocorrelation time estimate changes
-index = 0
-autocorr = np.empty(max_n)
-
-# This will be useful to testing convergence
-old_tau = np.inf
-
-max_n = 20000
-# Now we'll sample for up to max_n steps
-for sample in sampler_IM_IM.sample(pos, iterations=max_n, progress=True):
-	# Only check convergence every 100 steps
-	if sampler_IM_IM.iteration % 100:
-		continue
-
-	# Compute the autocorrelation time so far
-	# Using tol=0 means that we'll always get an estimate even
-	# if it isn't trustworthy
-	tau = sampler_IM_IM.get_autocorr_time(tol=0)
-	autocorr[index] = np.mean(tau)
-	index += 1
-
-	# Check convergence
-	converged = np.all(tau * 100 < sampler_IM_IM.iteration)
-	converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
-	if converged:
-		break
-	old_tau = tau
-
-# Now we'll sample for up to max_n steps
-for sample in sampler_IM_g.sample(pos, iterations=max_n, progress=True):
-    # Only check convergence every 100 steps
-    if sampler_IM_g.iteration % 100:
-        continue
-
-    # Compute the autocorrelation time so far
-    # Using tol=0 means that we'll always get an estimate even
-    # if it isn't trustworthy
-    tau = sampler_IM_g.get_autocorr_time(tol=0)
-    autocorr[index] = np.mean(tau)
-    index += 1
-
-    # Check convergence
-    converged = np.all(tau * 100 < sampler_IM_g.iteration)
-    converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
-    if converged:
-        break
-    old_tau = tau
